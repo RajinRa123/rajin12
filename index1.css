@@ -1,0 +1,28 @@
+.div{
+    margin: 6rem 12rem;
+    
+    height: 20rem;
+    width: 36rem;
+    background-size: 100% 100%;
+    box-shadow: 20px 20px 20px gray;
+    animation: slider 10s linear infinite;
+}
+@keyframes slider{
+    0%{
+        background-image: url(digital-art-with-urban-landscape-architecture.jpg);
+       
+    }
+    25%{
+       background-image: url(vibrant-sky-dusk-orange-blue-multi-colored-generative-ai.jpg);
+
+    }
+    50%{
+        background-image:url(cartoon-tropical-island-landscape.jpg) ;
+    }
+    75%{
+       background-image: url(c:/Users/Rajin/Downloads/vibrant-sky-dusk-orange-blue-multi-colored-generative-ai.jpg);
+    }
+100%{
+  background-image: url(c:/Users/Rajin/Downloads/digital-art-with-urban-landscape-architecture.jpg);
+}
+}
