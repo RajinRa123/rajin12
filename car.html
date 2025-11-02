@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+  <title>Advanced Car Race — Single File</title>
+  <style>
+    /* --- Reset & layout --- */
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial}
+    #gameWrap{display:flex;height:100vh;align-items:stretch;background:linear-gradient(#87CEEB,#0b2340)}
+    canvas{display:block;background:#0b2340;flex:1}
+    #sidebar{width:360px;max-width:40%;background:linear-gradient(180deg,#0f1724,#071226);color:#e6eef8;padding:18px;box-sizing:border-box;box-shadow:0 6px 30px rgba(2,6,23,.6)}
+    h1{margin:0 0 6px;font-size:18px}
+    .muted{color:#9fb4c9;font-size:13px}
+    .row{display:flex;gap:10px;margin:10px 0}
+    .btn{background:#0ea5a1;border:none;padding:10px 12px;border-radius:8px;color:#022;cursor:pointer;font-weight:600}
+    .btn.ghost{background:transparent;border:1px solid rgba(255,255,255,.08);color:#cfe8f2}
+    label{font-size:13px;color:#cfe8f2}
+    input[type=range]{width:100%}
+    .hud{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:12px}
+    .panel{background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01));padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.03)}
+    .kbd{display:inline-block;padding:6px 8px;background:rgba(0,0,0,.28);border-radius:6px;border:1px solid rgba(255,255,255,.03);font-weight:700}
+    footer{font-size:12px;color:#9fb4c9;margin-top:12px}
+    /* touch controls */
+    #touchControls{display:none;position:absolute;left:12px;bottom:12px;z-index:20}
+    .tbtn{width:72px;height:72px;border-radius:50%;background:rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center;margin:6px;border:1px solid rgba(255,255,255,.04)}
+    @media (max-width:900px){#sidebar{display:none}#touchControls{display:block}}
+  </style>
+</head>
+<body>
+  <div id="gameWrap">
+    <canvas id="gameCanvas" width="1280" height="720"></canvas>
+
+    <div id="sidebar">
+      <h1>Advanced Car Race</h1>
+      <div class="muted">Single-file HTML5 canvas game — AI opponents, physics, laps, minimap, mobile controls</div>
+
+      <div class="row">
+        <button id="btnStart" class="btn">Start Race</button>
+        <button id="btnPause" class="btn ghost">Pause</button>
+        <button id="btnReset" class="btn ghost">Reset</button>
+      </div>
+
+      <div class="panel">
+        <div style="display:flex;justify-content:space-between"><strong>Race</strong><span id="raceStatus" class="muted">Idle</span></div>
+        <div style="margin-top:8px">Laps: <span id="lapCount">3</span> • Opponents: <span id="aiCount">3</span></div>
+        <div class="hud" style="margin-top:10px">
+          <div>Lap <strong id="lapNow">0</strong>/<span id="lapTotal">3</span></div>
+          <div>Time <strong id="timeNow">0.00</strong>s</div>
+        </div>
+      </div>
+
+      <div style="margin-top:12px" class="panel">
+        <div style="margin-bottom:8px"><strong>Controls</strong></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <span class="kbd">W / ↑ Accelerate</span>
+          <span class="kbd">S / ↓ Brake</span>
+          <span class="kbd">A / ← Left</span>
+          <span class="kbd">D / → Right</span>
+          <span class="kbd">Space Handbrake</span>
+        </div>
+
+        <div style="margin-top:8px" class="muted">Tap controls on phones. Tilt support enabled.</div>
+      </div>
+
+      <div style="margin-top:12px" class="panel">
+        <label>AI difficulty</label>
+        <input id="aiDiff" type="range" min="0" max="1" step="0.01" value="0.6" />
+        <label>Grip / Friction</label>
+        <input id="grip" type="range" min="0.6" max="1" step="0.01" value="0.92" />
+      </div>
+
+      <div style="margin-top:12px" class="panel">
+        <strong>Top Scores (local)</strong>
+        <ol id="scoreList" style="margin:8px 0 0 16px"></ol>
+      </div>
+
+      <footer>Made with ❤️ — save as <code>index.html</code> and open in a modern browser</footer>
+    </div>
+
+    <!-- Simple touch controls for mobile -->
+    <div id="touchControls">
+      <div style="display:flex;flex-direction:column;align-items:center">
+        <div style="display:flex;gap:8px">
+          <div class="tbtn" id="tLeft">◀</div>
+          <div class="tbtn" id="tAccel">▲</div>
+          <div class="tbtn" id="tRight">▶</div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <div class="tbtn" id="tBrake">▼</div>
+          <div class="tbtn" id="tHand">HB</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  /** Advanced Car Race — single-file
+   * Features:
+   * - Canvas rendering, scalable viewport
+   * - Procedural track built from control points
+   * - Player car + AI cars with waypoint navigation
+   * - Realistic-ish physics: acceleration, braking, lateral traction, drift
+   * - Lap timing, local high scores via localStorage
+   * - Minimap, HUD, pause, respawn, touch and tilt support
+   * - Lightweight particle effects and skid sound (synth)
+   *
+   * You can modify constants under CONFIG for tuning difficulty.
+   */
+
+  // --- Config ---
+  const CONFIG = {
+    canvasWidth: 1280,
+    canvasHeight: 720,
+    roadWidth: 220,
+    playerMaxSpeed: 8.5, // px/frame
+    accel: 0.28,
+    brake: 0.6,
+    reverseAccel: 0.12,
+    steerSpeed: 3.8, // degrees per frame at low speed
+    gripBase: 0.92,
+    aiCountDefault: 3,
+    laps: 3,
+    particleLimit: 300
+  };
+
+  // --- Helpers ---
+  const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+  const lerp = (a,b,t)=>a+(b-a)*t;
+  const rnd = (a,b)=> a + Math.random()*(b-a);
+  function rad(deg){return deg*Math.PI/180}
+  function deg(rad){return rad*180/Math.PI}
+
+  // --- Setup ---
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  let DPR = Math.min(window.devicePixelRatio || 1.0, 2);
+  function resize(){
+    const w = window.innerWidth - (window.innerWidth>900?360:0);
+    const h = window.innerHeight;
+    canvas.width = Math.floor(w * DPR);
+    canvas.height = Math.floor(h * DPR);
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // UI references
+  const btnStart = document.getElementById('btnStart');
+  const btnPause = document.getElementById('btnPause');
+  const btnReset = document.getElementById('btnReset');
+  const lapNow = document.getElementById('lapNow');
+  const lapTotal = document.getElementById('lapTotal');
+  const timeNow = document.getElementById('timeNow');
+  const raceStatus = document.getElementById('raceStatus');
+  const aiDiffEl = document.getElementById('aiDiff');
+  const gripEl = document.getElementById('grip');
+  const aiCountEl = document.getElementById('aiCount');
+
+  // touch
+  const tLeft = document.getElementById('tLeft');
+  const tRight = document.getElementById('tRight');
+  const tAccel = document.getElementById('tAccel');
+  const tBrake = document.getElementById('tBrake');
+  const tHand = document.getElementById('tHand');
+
+  // --- Track generation (simple closed spline) ---
+  // Predefined control points forming an interesting circuit. You can replace these with a hand-drawn track.
+  const trackControl = [
+    {x:0.10,y:0.50},{x:0.20,y:0.20},{x:0.42,y:0.12},{x:0.62,y:0.18},{x:0.82,y:0.12},
+    {x:0.92,y:0.36},{x:0.78,y:0.60},{x:0.60,y:0.69},{x:0.42,y:0.82},{x:0.24,y:0.76},{x:0.12,y:0.62}
+  ];
+
+  function buildTrack(w, h, control){
+    const points = [];
+    const stepsPerSeg = 24;
+    const N = control.length;
+    function p(i){const c=control[(i+N)%N];return{x:c.x*w,y:c.y*h};}
+    for(let i=0;i<N;i++){
+      const p0=p(i-1), p1=p(i), p2=p(i+1), p3=p(i+2);
+      for(let t=0;t<stepsPerSeg;t++){
+        const tt = t/stepsPerSeg;
+        // Catmull-Rom
+        const x = 0.5*((-p0.x+3*p1.x-3*p2.x+p3.x)*tt*tt*tt + (2*p0.x-5*p1.x+4*p2.x-p3.x)*tt*tt + (-p0.x+p2.x)*tt + 2*p1.x);
+        const y = 0.5*((-p0.y+3*p1.y-3*p2.y+p3.y)*tt*tt*tt + (2*p0.y-5*p1.y+4*p2.y-p3.y)*tt*tt + (-p0.y+p2.y)*tt + 2*p1.y);
+        points.push({x,y});
+      }
+    }
+    return points;
+  }
+
+  // track will be built per resolution
+  let track = buildTrack(canvas.clientWidth, canvas.clientHeight, trackControl);
+
+  // compute centerline length and build waypoints
+  function computeWaypoints(){
+    const waypoints = [];
+    let acc = 0; let last = track[0];
+    for(let i=1;i<track.length;i++){
+      const p = track[i];
+      const d = Math.hypot(p.x-last.x,p.y-last.y);
+      acc += d; waypoints.push({x:p.x,y:p.y,dist:acc}); last=p;
+    }
+    // close final segment
+    const d = Math.hypot(track[0].x-last.x,track[0].y-last.y); acc += d; waypoints.push({x:track[0].x,y:track[0].y,dist:acc});
+    return {waypoints,trackLength:acc};
+  }
+
+  let wpData = computeWaypoints();
+
+  // --- Car class ---
+  class Car{
+    constructor(opts){
+      this.x = opts.x; this.y = opts.y; this.angle = opts.angle||0; this.w = opts.w||38; this.h = opts.h||18; this.color = opts.color||'#ff5b5b';
+      this.speed = 0; this.steer = 0; this.maxSpeed = opts.maxSpeed||CONFIG.playerMaxSpeed; this.accel = opts.accel||CONFIG.accel; this.brake = opts.brake||CONFIG.brake; this.grip = opts.grip||CONFIG.gripBase;
+      this.lap = 0; this.bestLap = Infinity; this.currentLapStart = null; this.completed = false;
+      this.id = opts.id||0; this.isAI = !!opts.ai;
+      this.waypointIndex = 0; this.progress = 0; this.rank = 0;
+    }
+    rectCorners(){
+      const cos = Math.cos(this.angle), sin = Math.sin(this.angle);
+      const hw = this.w/2, hh = this.h/2;
+      return [
+        {x:this.x + cos*hw - sin*hh, y:this.y + sin*hw + cos*hh},
+        {x:this.x - cos*hw - sin*hh, y:this.y - sin*hw + cos*hh},
+        {x:this.x - cos*hw + sin*hh, y:this.y - sin*hw - cos*hh},
+        {x:this.x + cos*hw + sin*hh, y:this.y + sin*hw - cos*hh}
+      ];
+    }
+    update(dt,input){
+      // input: {accel,brake,left,right,hand}
+      // speed integration
+      if(input.accel) this.speed += this.accel;
+      if(input.brake) this.speed -= this.brake*1.6;
+      if(!input.accel && !input.brake){ this.speed *= 0.994; }
+      // reverse
+      if(this.speed < -this.maxSpeed*0.4) this.speed = -this.maxSpeed*0.4;
+      if(this.speed > this.maxSpeed) this.speed = this.maxSpeed;
+      // steer depends on speed
+      const velocityFactor = clamp(Math.abs(this.speed)/this.maxSpeed,0,1);
+      const steerAmt = (input.left?-1:0) + (input.right?1:0);
+      this.angle += deg(rad(steerAmt * CONFIG.steerSpeed * (1.2 - velocityFactor))) * 0.0174533 * (this.speed/Math.max(0.5, this.maxSpeed/6));
+      // apply handbrake
+      if(input.hand){ this.speed *= 0.96; }
+      // lateral slip: simulate drift (reduce grip when turning fast)
+      const turning = Math.abs(steerAmt) && Math.abs(this.speed)>0.6;
+      const slip = turning ? (0.86 + (1-velocityFactor)*0.12) : this.grip;
+      // movement
+      this.x += Math.cos(this.angle)*this.speed;
+      this.y += Math.sin(this.angle)*this.speed;
+      // friction
+      this.speed *= slip;
+
+      // progress along waypoints
+      // find closest waypoint index
+      const wp = wpData.waypoints[this.waypointIndex];
+      const d = Math.hypot(wp.x - this.x, wp.y - this.y);
+      if(d < 60) this.waypointIndex = (this.waypointIndex + 1) % wpData.waypoints.length;
+    }
+    draw(ctx){
+      ctx.save();
+      ctx.translate(this.x,this.y);
+      ctx.rotate(this.angle);
+      // body
+      ctx.fillStyle = this.color;
+      roundRect(ctx, -this.w/2, -this.h/2, this.w, this.h, 6);
+      ctx.fill();
+      // windows
+      ctx.fillStyle = 'rgba(255,255,255,0.14)';
+      ctx.fillRect(-this.w/4, -this.h/4, this.w/2, this.h/3);
+      // wheels (simple)
+      ctx.fillStyle = '#111';
+      ctx.fillRect(-this.w/2+4, -this.h/2-3, 8, 4);
+      ctx.fillRect(-this.w/2+4, this.h/2-1, 8, 4);
+      ctx.fillRect(this.w/2-12, -this.h/2-3, 8, 4);
+      ctx.fillRect(this.w/2-12, this.h/2-1, 8, 4);
+      ctx.restore();
+    }
+  }
+
+  function roundRect(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
+
+  // --- Particles ---
+  const particles = [];
+  function spawnSkid(x,y,vx,vy,size,life){ if(particles.length>CONFIG.particleLimit) return; particles.push({x,y,vx,vy,size,life,age:0}); }
+  function updateParticles(){ for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.age++;p.x+=p.vx;p.y+=p.vy;p.size*=0.985; if(p.age>p.life) particles.splice(i,1);} }
+  function drawParticles(ctx){ for(const p of particles){ctx.globalAlpha = 1 - p.age/p.life; ctx.beginPath(); ctx.fillStyle='rgba(20,20,20,0.6)'; ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill();} ctx.globalAlpha=1; }
+
+  // --- AI ---
+  function makeAI(count){
+    const ais = [];
+    for(let i=0;i<count;i++){
+      const idx = Math.floor((i+1) * (wpData.waypoints.length / (count+1)));
+      const p = wpData.waypoints[idx];
+      ais.push(new Car({x:p.x+rnd(-30,30), y:p.y+rnd(-30,30), angle:0, color:`hsl(${Math.floor(rnd(180,340))} 70% 60%)`, ai:true, maxSpeed: CONFIG.playerMaxSpeed*0.9}));
+    }
+    return ais;
+  }
+
+  // collision detection simple - keep cars off-road
+  function keepOnTrack(car){
+    // calculate distance from centerline (nearest segment)
+    let bestD = 1e9, bestI=0;
+    for(let i=0;i<wpData.waypoints.length;i++){
+      const p = wpData.waypoints[i];
+      const d = Math.hypot(car.x-p.x, car.y-p.y);
+      if(d < bestD){bestD=d; bestI=i;}
+    }
+    // if off road: push back towards center
+    const threshold = CONFIG.roadWidth*0.6;
+    if(bestD > threshold){
+      const target = wpData.waypoints[bestI];
+      const ang = Math.atan2(target.y-car.y, target.x-car.x);
+      car.x += Math.cos(ang) * Math.min((bestD-threshold)*0.15, 6);
+      car.y += Math.sin(ang) * Math.min((bestD-threshold)*0.15, 6);
+      car.speed *= 0.94; // slow down on grass
+      // spawn particles
+      spawnSkid(car.x,car.y,(Math.random()-0.5)*1.4,(Math.random()-0.5)*1.4,3,30);
+    }
+  }
+
+  // --- Sound (tiny synth for skids) ---
+  let audioCtx = null;
+  function ensureAudio(){ if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }
+  function playSkid(freq, duration=0.08){ ensureAudio(); const o = audioCtx.createOscillator(); const g = audioCtx.createGain(); o.type='sawtooth'; o.frequency.value=freq; g.gain.value=0.02; o.connect(g); g.connect(audioCtx.destination); o.start(); g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration); o.stop(audioCtx.currentTime + duration); }
+
+  // --- Game state ---
+  let player, ais = [], entities = [];
+  let running = false, paused = false;
+  let keys = {};
+  let tPrev = performance.now();
+  let camera = {x:0,y:0,scale:1};
+  let lapTotalVal = CONFIG.laps;
+  let aiCount = CONFIG.aiCountDefault;
+  let lastLapTime = 0;
+  let bestLap = Infinity;
+
+  function startRace(){
+    resize();
+    track = buildTrack(canvas.clientWidth, canvas.clientHeight, trackControl);
+    wpData = computeWaypoints();
+
+    aiCount = parseInt(aiCountEl.value) || CONFIG.aiCountDefault;
+    lapTotalVal = parseInt(document.getElementById('lapCount').innerText) || CONFIG.laps;
+    lapTotal.innerText = lapTotalVal;
+
+    // spawn player at start
+    const start = wpData.waypoints[0];
+    player = new Car({x:start.x - 60, y:start.y - 20, angle:0, color:'#56cfe1', maxSpeed:CONFIG.playerMaxSpeed, accel:CONFIG.accel});
+    player.currentLapStart = performance.now();
+
+    // AI
+    ais = makeAI(aiCount);
+
+    // entities
+    entities = [player, ...ais];
+
+    running = true; paused = false; tPrev = performance.now();
+    raceStatus.innerText = 'Racing';
+    requestAnimationFrame(loop);
+  }
+
+  function pauseToggle(){ paused = !paused; btnPause.innerText = paused? 'Resume' : 'Pause'; raceStatus.innerText = paused? 'Paused' : 'Racing'; }
+  function resetRace(){ running = false; paused = false; raceStatus.innerText = 'Idle'; }
+
+  // --- Input handling ---
+  window.addEventListener('keydown', e=>{ keys[e.key.toLowerCase()] = true; if(e.key===' '){ e.preventDefault(); } });
+  window.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()] = false; });
+
+  // touch mapping
+  function setTouch(el,prop){ let d=false; el.addEventListener('pointerdown',e=>{d=true; e.preventDefault(); setTouchState(prop,true); }); el.addEventListener('pointerup',e=>{d=false; setTouchState(prop,false)}); el.addEventListener('pointercancel',e=>{d=false; setTouchState(prop,false)}); }
+  const touchState = {left:false,right:false,accel:false,brake:false,hand:false};
+  function setTouchState(k,v){ touchState[k]=v; }
+  setTouch(tLeft,'left'); setTouch(tRight,'right'); setTouch(tAccel,'accel'); setTouch(tBrake,'brake'); setTouch(tHand,'hand');
+
+  // tilt support
+  let tiltX = 0;
+  window.addEventListener('deviceorientation', e=>{ if(e.gamma!==null){ // gamma is left-right tilt
+    tiltX = clamp(e.gamma/25,-1,1);
+  }});
+
+  // --- HUD & scoring ---
+  function updateHUD(dt){ lapNow.innerText = player.lap; timeNow.innerText = ((performance.now()-player.currentLapStart)/1000).toFixed(2); }
+
+  function saveScore(name, time){ const key='race_scores_v1'; const arr = JSON.parse(localStorage.getItem(key)||'[]'); arr.push({name, time, date: new Date().toISOString()}); arr.sort((a,b)=>a.time-b.time); localStorage.setItem(key, JSON.stringify(arr.slice(0,10))); renderScores(); }
+  function renderScores(){ const key='race_scores_v1'; const arr = JSON.parse(localStorage.getItem(key)||'[]'); const list = document.getElementById('scoreList'); list.innerHTML = ''; for(const s of arr){ const li = document.createElement('li'); li.textContent = `${(s.time/1000).toFixed(2)}s — ${new Date(s.date).toLocaleString()}`; list.appendChild(li);} }
+  renderScores();
+
+  // --- Main loop ---
+  function loop(t){ if(!running) return; const dt = (t - tPrev)/16.666; tPrev = t; if(paused){ requestAnimationFrame(loop); return;} update(dt); draw(); requestAnimationFrame(loop); }
+
+  function update(dt){ // dt ~ 1 when 60fps
+    // update grip & ai diff
+    CONFIG.gripBase = parseFloat(gripEl.value);
+    const aiDiff = parseFloat(aiDiffEl.value);
+
+    // player input pack
+    const input = {
+      accel: keys['w'] || keys['arrowup'] || touchState.accel,
+      brake: keys['s'] || keys['arrowdown'] || touchState.brake,
+      left: keys['a'] || keys['arrowleft'] || touchState.left || tiltX<-0.25,
+      right: keys['d'] || keys['arrowright'] || touchState.right || tiltX>0.25,
+      hand: keys[' '] || touchState.hand
+    };
+
+    // update player
+    if(player){ player.grip = CONFIG.gripBase; player.update(dt,input); keepOnTrack(player); }
+
+    // spawn skid particles when turning hard
+    if(Math.abs(player.speed)>2 && (input.left || input.right || input.hand)){
+      spawnSkid(player.x - Math.cos(player.angle)*10 + rnd(-4,4), player.y - Math.sin(player.angle)*10 + rnd(-4,4), (Math.random()-0.5)*1.2, (Math.random()-0.5)*1.2, 2.6, 18);
+      if(Math.random()<0.06) playSkid(300 + Math.random()*200, 0.06);
+    }
+
+    // update AIs
+    for(const ai of ais){ // very simple steering towards waypoint
+      const target = wpData.waypoints[ai.waypointIndex];
+      const angTo = Math.atan2(target.y - ai.y, target.x - ai.x);
+      let delta = normalizeAngle(angTo - ai.angle);
+      // steering depends on aiDiff and distance
+      const steer = clamp(delta, -0.9, 0.9) * (1 + (aiDiff-0.5)*1.2);
+      const aiInput = {accel:true, brake:false, left: steer< -0.02, right: steer>0.02, hand:false};
+      // speed control: slow down before tight corners
+      const lookAhead = wpData.waypoints[(ai.waypointIndex+8)%wpData.waypoints.length];
+      const cornerAngle = Math.abs(normalizeAngle(Math.atan2(lookAhead.y-ai.y,lookAhead.x-ai.x) - ai.angle));
+      if(cornerAngle > 0.9){ aiInput.brake = true; aiInput.accel=false; }
+      ai.grip = CONFIG.gripBase * (0.9 + (1-aiDiff)*0.35);
+      ai.update(dt, aiInput);
+      keepOnTrack(ai);
+    }
+
+    // update particles & lap detection
+    updateParticles();
+    // lap detection simple: count when player crosses waypoint 0
+    const startWp = wpData.waypoints[0];
+    const d = Math.hypot(player.x - startWp.x, player.y - startWp.y);
+    if(d < 40){
+      const now = performance.now();
+      if(player.currentLapStart && now - player.currentLapStart > 1200){ // prevent multiple triggers
+        const lapTime = now - player.currentLapStart; player.currentLapStart = now; player.lap += 1; lastLapTime = lapTime; bestLap = Math.min(bestLap, lapTime); if(player.lap > lapTotalVal){ // finished race
+          running = false; raceStatus.innerText = 'Finished'; saveScore('You', now - (player.currentLapStart||now));
+        }
+      }
+    }
+
+    updateHUD(dt);
+  }
+
+  function normalizeAngle(a){ while(a>Math.PI) a -= Math.PI*2; while(a<-Math.PI) a += Math.PI*2; return a; }
+
+  // --- Rendering ---
+  function draw(){
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    // camera: center on player
+    camera.x = player.x - w/2; camera.y = player.y - h/2;
+
+    // clear
+    ctx.clearRect(0,0,w,h);
+
+    // background gradient
+    const g = ctx.createLinearGradient(0,0,0,h); g.addColorStop(0,'#091428'); g.addColorStop(1,'#071226'); ctx.fillStyle = g; ctx.fillRect(0,0,w,h);
+
+    // draw track grass and road: road is thick polyline along centerline
+    ctx.save(); ctx.translate(-camera.x, -camera.y);
+
+    // grass
+    ctx.fillStyle = '#0c2b1f';
+    ctx.fillRect(camera.x, camera.y, w, h);
+
+    // road polygon
+    drawRoad(ctx);
+
+    // draw waypoints small
+    for(let i=0;i<wpData.waypoints.length;i++){ const p = wpData.waypoints[i]; ctx.beginPath(); ctx.fillStyle = 'rgba(255,255,255,0.02)'; ctx.arc(p.x,p.y,6,0,Math.PI*2); ctx.fill(); }
+
+    // draw cars (sorted by y for simple painter's order)
+    const all = [...entities]; all.sort((a,b)=>a.y-b.y);
+    for(const e of all) e.draw(ctx);
+
+    drawParticles(ctx);
+
+    // minimap
+    drawMiniMap(ctx, w, h);
+
+    ctx.restore();
+
+    // HUD overlay
+    drawHUD(ctx, w, h);
+  }
+
+  function drawRoad(ctx){
+    const rw = CONFIG.roadWidth;
+    ctx.beginPath();
+    for(let i=0;i<wpData.waypoints.length;i++){
+      const p = wpData.waypoints[i]; if(i===0) ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y);
+    }
+    ctx.closePath();
+    // wide stroke
+    ctx.lineWidth = rw*2.2; ctx.strokeStyle = '#2b2b2b'; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.stroke();
+    // road darker center
+    ctx.lineWidth = rw; ctx.strokeStyle = '#333'; ctx.stroke();
+    // dashed center line
+    ctx.setLineDash([12,20]); ctx.lineWidth = Math.max(2, rw*0.06); ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.stroke(); ctx.setLineDash([]);
+    // roadside highlights
+    ctx.lineWidth = Math.max(1, rw*0.18); ctx.strokeStyle = 'rgba(255,255,255,0.03)'; ctx.stroke();
+  }
+
+  function drawHUD(ctx, w, h){
+    // top-left: speed
+    ctx.save(); ctx.fillStyle='rgba(0,0,0,0.22)'; ctx.fillRect(12,12,220,84); ctx.fillStyle='#e6eef8'; ctx.font='700 18px system-ui'; ctx.fillText('Speed', 22,36); ctx.font='600 26px system-ui'; ctx.fillText(Math.round(player.speed*30) + ' km/h', 22,66);
+
+    // timer & laps
+    ctx.fillStyle='#cfe8f2'; ctx.font='600 18px system-ui'; ctx.fillText(`Lap ${player.lap}/${lapTotalVal}`, w-160, 34); ctx.fillText(`${(performance.now()-player.currentLapStart)/1000 | 0}.${Math.floor(((performance.now()-player.currentLapStart)%1000)/10)}`, w-160, 62);
+    ctx.restore();
+  }
+
+  function drawMiniMap(ctx, w, h){
+    const size = Math.min(180, w*0.18); const pad = 12; const x = w - size - pad, y = h - size - pad;
+    ctx.save(); ctx.globalAlpha = 0.95; ctx.fillStyle='rgba(3,9,18,0.6)'; roundRect(ctx, x-6, y-6, size+12, size+12, 10); ctx.fill();
+    // bounds of track
+    let minx=1e9,miny=1e9,maxx=-1e9,maxy=-1e9; for(const p of wpData.waypoints){ minx=Math.min(minx,p.x); miny=Math.min(miny,p.y); maxx=Math.max(maxx,p.x); maxy=Math.max(maxy,p.y);} const tx= minx, ty=miny, tw=maxx-minx, th=maxy-miny;
+    const mscale = Math.min((size-16)/tw, (size-16)/th);
+    ctx.translate(x+8,y+8);
+    // track
+    ctx.beginPath(); for(let i=0;i<wpData.waypoints.length;i++){ const p=wpData.waypoints[i]; const px=(p.x-tx)*mscale, py=(p.y-ty)*mscale; if(i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py); } ctx.closePath(); ctx.fillStyle='rgba(80,80,80,0.95)'; ctx.fill();
+    // cars
+    function drawDot(car,color){ ctx.beginPath(); ctx.fillStyle=color; const px=(car.x-tx)*mscale, py=(car.y-ty)*mscale; ctx.arc(px,py,3,0,Math.PI*2); ctx.fill(); }
+    drawDot(player,'#56cfe1'); for(const ai of ais) drawDot(ai,ai.color);
+    ctx.restore();
+  }
+
+  // --- Buttons ---
+  btnStart.addEventListener('click', ()=>{ if(!running) startRace(); else { // quick respawn
+    player.x = wpData.waypoints[0].x - 60; player.y = wpData.waypoints[0].y - 20; player.speed = 0; }
+  });
+  btnPause.addEventListener('click', pauseToggle);
+  btnReset.addEventListener('click', ()=>{ resetRace(); renderScores(); });
+
+  // ai count display
+  aiCountEl.innerText = CONFIG.aiCountDefault;
+
+  // set up some defaults
+  document.getElementById('lapCount').innerText = CONFIG.laps;
+
+  // autoplay start for convenience (but allow user to start audio with interaction)
+  // Start paused; the user must press Start to run.
+
+  // save initial values
+  aiCountEl.value = CONFIG.aiCountDefault;
+
+  // small demo: create default AI count control input
+  // (Not editable in UI except via console; user can modify code in the file.)
+
+  // allow controlling AI count via keyboard + / -
+  window.addEventListener('keydown', (e)=>{ if(e.key==='+'||e.key==='='){ aiCount +=1; } if(e.key==='-'){ aiCount = Math.max(0,aiCount-1); } });
+
+  // request initial draw to show UI
+  (function initialDraw(){ ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight); ctx.fillStyle='#071226'; ctx.fillRect(0,0,canvas.clientWidth,canvas.clientHeight); ctx.fillStyle='#cfe8f2'; ctx.font='700 22px system-ui'; ctx.fillText('Press START to race', 36, 80); })();
+
+  // expose for debugging
+  window._GAME = {startRace, resetRace, player, ais, CONFIG};
+  </script>
+</body>
+</html>
